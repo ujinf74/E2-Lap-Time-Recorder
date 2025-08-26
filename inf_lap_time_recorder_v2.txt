@@ -1,0 +1,307 @@
+@name inf Lap Time Recorder v2
+
+@inputs [EGP]:wirelink Start Reset
+
+@outputs [Running]:string
+
+@persist [Size]:vector2 [Sensor]:entity
+@persist LastTime Lap Stop [Players Recording Timer LapTime LastPos Names BestLap]:table
+
+@model models/hunter/plates/plate05x05.mdl
+@strict
+
+if ( first() )
+{
+    Size = vec2(500,150)
+    
+    Sensor = entity()
+    
+    LastTime = systime()
+    Lap = 0
+    Stop = 0
+    
+    Players = table()
+    Recording = table()
+    Timer = table()
+    LapTime = table()
+    LastPos = table()
+    Names = table()
+    BestLap = table()
+}
+
+function void seedPlayer(Player:entity)
+{
+    let Index = Player:steamID64()
+    Players[Index] = Player
+    Recording[Index] = 0
+    Timer[Index] = 0
+    let Mover = Player:vehicle() ? Player:vehicle() : Player
+    LastPos[Index] = Mover:boxCenterW() - Sensor:toWorld(vec(0,0,Size[2] / 2))
+    Names[Index] = Player:name()
+}
+function string number:putChar(Number:number,Char:string)
+{
+    let String = This:toString()
+    return Char:repeat(Number - String:length()) + String
+}
+function string string:cutString(Number:number)
+{
+    return This:left(Number) + (Number < This:length() ? "..." : "")
+}
+function string toMinute(Number:number)
+{
+    return (min(floor(Number / 60),99)):putChar(2,"0") + ":" + (floor(Number) % 60):putChar(2,"0") + "." + (floor(Number % 1 * 1000)):putChar(3,"0")
+}
+function table table:getBestLap()
+{
+    let BestID = BestLap ? BestLap[1,string] : ""
+    let BestTime = BestLap ? BestLap[2,number] : 1e+30
+    let Count = This:count()
+    for ( I = 1, Count )
+    {
+        let Table = This[I,table]
+        let ID = Table[1,string]
+        let Time = Table[2,number]
+
+        if ( Time < BestTime )
+        {
+            BestID = ID
+            BestTime = Time
+        }
+    }
+
+    return table(BestID,BestTime)
+}
+function void wirelink:egpReset()
+{
+    This:egpClear()
+    
+    This:egpText(1,"BEST:",vec2(32))
+    This:egpSize(1,36)
+    
+    for ( I = 0, 8 )
+    {
+        This:egpText(2 + I,(1 + I):putChar(3,"  ") + ")",vec2(32,96 + 32 * I))
+        This:egpSize(2 + I,28)
+    }
+    
+    for ( I = 0, 4 )
+    {
+        let Length = 384
+        This:egpCircle(11 + I,vec2((512 - Length) / 2 + Length * I / 4,448),vec2(24))
+        This:egpColor(11 + I,vec(31))
+    }
+}
+
+if ( first() )
+{
+    holoCreate(0,Sensor:toWorld(vec(0,0,Size[2] / 2)),vec(0.1,Size[1],Size[2]) / 12)
+    holoColor(0,vec4(vec(0),191))
+    
+    holoCreate(1,Sensor:toWorld(vec(0,0,Size[2] * 2) / 2),vec(1,Size[1] - 1,1) / 12)
+    holoCreate(2,Sensor:toWorld(vec(0,Size[1],Size[2]) / 2),vec(1,1,Size[2] + 1) / 12)
+    holoCreate(3,Sensor:toWorld(vec(0,0,0) / 2),vec(1,Size[1] - 1,1) / 12)
+    holoCreate(4,Sensor:toWorld(vec(0,-Size[1],Size[2]) / 2),vec(1,1,Size[2] + 1) / 12)
+    
+    holoCreate(5,Sensor:toWorld(vec(0,0,1.5)),vec(1,0.1,0.7),ang(0,90,90),vec(),"prism")
+    
+    Sensor:setMaterial("phoenix_storms/roadside")
+    
+    for ( I = 0, 5 )
+    {
+        holoParent(I,Sensor)
+    }
+    
+    let PlayerEntitys = players()
+    let Count = PlayerEntitys:count()
+    for ( I = 1, Count )
+    {
+        seedPlayer(PlayerEntitys[I,entity])
+    }
+    
+    if ( ->EGP )
+    {
+        EGP:egpReset()
+    }
+}
+
+event input(InputName:string)
+{
+    if ( InputName == "Start" & Start & !Stop )
+    {
+        Stop = 1
+        
+        let SetLight = function(Number:number,Color:vector)
+        {
+            if ( ->EGP )
+            {
+                EGP:egpColor(Number,Color)
+            }
+        }
+        
+        timer("Red",1,5,function()
+        {
+            SetLight(15 - timerRepsLeft("Red"),vec(255,0,0))
+            Sensor:soundPlay(1,0.5,"synth/triangle_440.wav")
+        })
+        timer(5 + random(2,3),function()
+        {
+            for ( I = 0, 4 )
+            {
+                SetLight(11 + I,vec(31))
+            }
+            Sensor:soundPlay(1,0.5,"synth/triangle_880.wav")
+            
+            Stop = 0
+        })
+    }
+    if ( InputName == "Reset" & Reset )
+    {
+        let Keys = Players:keys()
+        let Count = Keys:count()
+        for ( I = 1, Count )
+        {
+            seedPlayer(Players[Keys[I,string],entity])
+        }
+    }
+    if ( InputName == "EGP" & ->EGP )
+    {
+        EGP:egpReset()
+    }
+}
+
+event playerConnected(Player:entity)
+{
+    seedPlayer(Player)
+}
+event playerDisconnected(Player:entity)
+{
+    let Index = Player:steamID64()
+    Players:remove(Index)
+    Recording:remove(Index)
+    Timer:remove(Index)
+    LastPos:remove(Index)
+}
+
+event keyPressed(Player:entity, Key:string, Down:number, _:string)
+{
+    if ( Key == "lalt" & Down )
+    {
+        let Index = Player:steamID64()
+        Recording[Index] = 0
+        Timer[Index] = 0
+    }
+}
+
+event tick()
+{
+    let CurTime = systime()
+    let Int = CurTime - LastTime
+    LastTime = CurTime
+    
+    let Keys = Players:keys()
+    let Center = Sensor:toWorld(vec(0,0,Size[2] / 2))
+    let Dirs = matrix(Sensor:forward(),Sensor:right(),Sensor:up())
+    
+    let Count = Keys:count()
+    for ( I = 1, Count )
+    {
+        let Index = Keys[I,string]
+        
+        let Player = Players[Index,entity]
+        
+        if ( !Player:isValid() | !Player:isAlive() )
+        {
+            continue
+        }
+        let Mover = Player:vehicle() ? Player:vehicle() : Player
+        
+        let Pos = Mover:boxCenterW() - Center
+        let P0 = LastPos[Index,vector]
+        let Vel = Pos - P0
+        LastPos[Index] = Pos
+    
+        let Forward = Dirs:x()
+        let VelX = Forward:dot(Vel)
+        let Time = 0 < VelX ? -Forward:dot(P0) / VelX : -1
+        let Delta = P0 + Vel * Time
+        let Right = Dirs:y():dot(Delta)
+        let Up = Dirs:z():dot(Delta)
+        
+        let In = (abs(Right) <= Size[1] / 2) & (abs(Up) <= Size[2] / 2) & 0 < Time & Time <= 1
+        if ( In )
+        {
+            if ( Recording[Index,number] )
+            {
+                Lap++
+                LapTime:pushTable(table(Index,Timer[Index,number] + Time * Int))
+                if ( 9 < Lap )
+                {
+                    LapTime:shift()
+                }
+                BestLap = LapTime:getBestLap()
+                
+                if ( ->EGP )
+                {
+                    EGP:egpSetText(1,"BEST: " + toMinute(BestLap[2,number]) + " - " + Names[BestLap[1,string],string]:cutString(20))
+                    
+                    let Count = min(LapTime:count(),9)
+                    for ( I = 1, Count )
+                    {
+                        let Number = I + max(Lap - 9,0)
+                        EGP:egpSetText(1 + I,Number:putChar(3,"  ") + ") " + toMinute(LapTime[I,table][2,number]) + " - "
+                         + Names[LapTime[I,table][1,string],string]:cutString(20))
+                    }
+                }
+            }
+            elseif ( !Stop )
+            {
+                Recording[Index] = 1
+            }
+            Timer[Index] = (1 - Time) * Int
+            continue
+        }
+        
+        if ( Recording[Index,number] )
+        {
+            Timer[Index] = Timer[Index,number] + Int
+        }
+    }
+    
+    let Name = "inf LAP TIMER"
+    if ( LapTime )
+    {
+        Name = Name + "
+BEST : " + toMinute(BestLap[2,number]) + " - " + Names[BestLap[1,string],string]:cutString(20)
+    }
+
+    Running = ""
+    let Number = 0
+    Count = Players:count()
+    for ( I = 1, Count )
+    {
+        let Index = Keys[I,string]
+        
+        if ( Recording[Index,number] )
+        {
+            Number++
+            Running = Running + "
+" + Number:toString() + ") " + toMinute(Timer[Index,number]) + " - " + Players[Index,entity]:name():cutString(20)
+        }
+    }
+    
+    if ( Running )
+    {
+        Name = Name + "
+---Running---" + Running
+    }
+    
+    setOverlayText(Name)
+    
+    exit()
+}
+
+if ( dupefinished() )
+{
+    reset()
+}
